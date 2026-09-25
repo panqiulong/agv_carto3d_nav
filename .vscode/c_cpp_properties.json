@@ -1,0 +1,25 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${workspaceFolder}/.vscode/browse.vc.db",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/panqiulong/AGV1/install/agv_can_driver/include/**",
+        "/opt/ros/humble/include/**",
+        "/home/panqiulong/AGV1/src/FDILink_ROS2/include/**",
+        "/home/panqiulong/AGV1/src/agv_can_driver/include/**",
+        "/home/panqiulong/AGV1/src/ahrs_driver/src/rf2o_laser_odometry/include/**",
+        "/home/panqiulong/AGV1/src/ahrs_driver/src/rplidar_ros/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ros2",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++17"
+    }
+  ],
+  "version": 4
+}

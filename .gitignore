@@ -1,0 +1,8 @@
+build/
+install/
+log/
+__pycache__/
+*.pyc
+
+# VSCode C/C++ extension browse cache (machine-local, churns constantly)
+**/.vscode/browse.vc.db*

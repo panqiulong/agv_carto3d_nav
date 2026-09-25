@@ -1,0 +1,6 @@
+# gazebo_ros_init 插件（节点名 gazebo）的参数
+# /clock 默认只有 10 Hz，所有 use_sim_time 节点的 now() 会变成 100 ms 一跳，
+# Cartographer 的 map->odom 也只能 10 Hz 发布，Nav2 查 TF 时要等，控制周期超时
+gazebo:
+  ros__parameters:
+    publish_rate: 200.0
