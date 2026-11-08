@@ -1,11 +1,12 @@
-"""Cartographer 3D 建图。先启动仿真（agv_urdf gazebo_sim.launch.py），再启动本文件，
+"""Cartographer 3D 建图。先启动仿真（agv_gazebo gazebo_sim.launch.py），再启动本文件，
 用键盘遥控（/cmd_vel）绕场景走一圈，最后 `ros2 run agv_nav save_map.sh <输出前缀>` 保存。"""
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -26,9 +27,10 @@ def generate_launch_description():
             '-configuration_basename', 'carto_3d_mapping.lua',
         ],
         remappings=[
-            ('points2', '/livox/lidar_PointCloud2'),
+            ('points2_1', '/livox/lidar_PointCloud2'),
+            ('points2_2', '/livox/lidar_rear_PointCloud2'),
             ('imu', '/imu'),
-            ('odom', '/odom'),
+            ('odom', '/wheel/odom'),
         ],
     )
 
@@ -55,14 +57,20 @@ def generate_launch_description():
         name='rviz2',
         output='screen',
         condition=IfCondition(use_rviz),
-        arguments=['-d', os.path.join(
-            get_package_share_directory('nav2_bringup'), 'rviz', 'nav2_default_view.rviz')],
+        arguments=['-d', os.path.join(pkg_dir, 'rviz', 'agv.rviz')],
         parameters=[{'use_sim_time': use_sim_time}],
     )
 
     return LaunchDescription([
+        # pip 装的 numpy 自带 OpenBLAS，默认每个进程开几十个线程忙等：实测 terrain_obstacle_filter 一个节点占 17 个核，
+        # 把仿真和 MPPI 都拖慢。这些节点只做小矩阵运算，单线程足够
+        SetEnvironmentVariable('OPENBLAS_NUM_THREADS', '1'),
+        SetEnvironmentVariable('OMP_NUM_THREADS', '1'),
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument('use_rviz', default_value='true'),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(pkg_dir, 'launch', 'odometry.launch.py')),
+            launch_arguments={'use_sim_time': use_sim_time}.items()),
         cartographer_node,
         grid_map_node,
         cmd_vel_node,

@@ -1,0 +1,12 @@
+# 由 gen_warehouse_world.py 生成（map 坐标系 = 世界坐标 - 出生点）；进梯程序的先验
+frame: map
+cabin_center:
+- 24.6
+- 15.2
+cabin_yaw: 0.0
+cabin_width: 2.0
+cabin_depth: 2.6
+door_width: 1.8
+wait_point:
+- 19.15
+- 15.2

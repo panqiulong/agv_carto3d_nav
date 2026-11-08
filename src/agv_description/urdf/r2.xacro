@@ -1,0 +1,821 @@
+<?xml version="1.0"?>
+<robot name="r2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- 2026-10-10 整车按 1.5 倍放大（几何尺寸 x1.5，质量不变，转动惯量 x2.25；关节力矩上限和底盘插件的
+       速度 / 转向 PID 增益、积分上限都 x2.25，保持和放大前相近的加速和爬坡能力）。
+       车体 1.125 x 0.75 m，车轮半径 0.187 m，轴距 0.855 m，后轮距 0.93 m，最小转弯半径约 1.95 m -->
+  <xacro:include filename="$(find ros2_livox_simulation)/urdf/mid360.xacro" />
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="0 0 0.12"
+        rpy="0 0 0" />
+      <mass
+        value="8.65060102373982" />
+      <inertia
+        ixx="0.441992"
+        ixy="0"
+        ixz="0"
+        iyy="0.948863"
+        iyz="0"
+        izz="1.317865" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0.12"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="1.125 0.75 0.225" />
+      </geometry>
+      <material
+        name="chassis_color">
+        <color
+          rgba="0.8 0.1 0.1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0.12"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="1.125 0.75 0.225" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="lidar_Link">
+    <inertial>
+      <origin
+        xyz="0.000923 0.000615 -0.026179"
+        rpy="0 0 0" />
+      <mass
+        value="0.141887016832264" />
+      <inertia
+        ixx="0.000101"
+        ixy="-0"
+        ixz="0.000002"
+        iyy="0.000094"
+        iyz="0.000001"
+        izz="0.000155" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://agv_description/meshes/lidar_Link.STL" scale="1.5 1.5 1.5" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.1 0.3 0.9 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://agv_description/meshes/lidar_Link.STL" scale="1.5 1.5 1.5" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="lidar"
+    type="fixed">
+    <origin
+      xyz="0.487572 -0.001922 0.450398"
+      rpy="-0.0361905755464053 0.820261473184206 -0.00178472273333384" />
+    <parent
+      link="base_link" />
+    <child
+      link="lidar_Link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <!-- 雷达架高 0.2 m：前倾 47° 的雷达装在车顶上 0.25 m 时，正下方的车身挡掉约 3 成射线，Cartographer 定位和地图的
+       匹配得分到不了门槛（2026-11-01 实测）。支架只有外观、没有碰撞，射线不会打在它上面 -->
+  <link name="lidar_mast_Link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.05" />
+      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.00002" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.025" length="0.22" />
+      </geometry>
+      <material name="">
+        <color rgba="0.3 0.3 0.3 1" />
+      </material>
+    </visual>
+  </link>
+  <joint name="lidar_mast" type="fixed">
+    <origin xyz="0.487572 -0.001922 0.33" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lidar_mast_Link" />
+  </joint>
+  <!-- 后雷达：和前雷达关于车身中心对称（同样架高、同样倾角，朝后）。前雷达朝后的射线都打向天空，看不到车尾的地面 -->
+  <link name="lidar_rear_Link">
+    <inertial>
+      <origin xyz="0.000923 0.000615 -0.026179" rpy="0 0 0" />
+      <mass value="0.141887016832264" />
+      <inertia ixx="0.000101" ixy="-0" ixz="0.000002" iyy="0.000094" iyz="0.000001" izz="0.000155" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://agv_description/meshes/lidar_Link.STL" scale="1.5 1.5 1.5" />
+      </geometry>
+      <material name="">
+        <color rgba="0.1 0.3 0.9 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://agv_description/meshes/lidar_Link.STL" scale="1.5 1.5 1.5" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="lidar_rear" type="fixed">
+    <origin xyz="-0.487572 0 0.450398" rpy="0 0.820261473184206 ${pi}" />
+    <parent link="base_link" />
+    <child link="lidar_rear_Link" />
+  </joint>
+  <link name="lidar_rear_mast_Link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.05" />
+      <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.00002" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.025" length="0.22" />
+      </geometry>
+      <material name="">
+        <color rgba="0.3 0.3 0.3 1" />
+      </material>
+    </visual>
+  </link>
+  <joint name="lidar_rear_mast" type="fixed">
+    <origin xyz="-0.487572 0 0.33" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lidar_rear_mast_Link" />
+  </joint>
+  <!-- 传感器换颜色和车身、轮子区分：激光雷达蓝色、相机黄色（Gazebo 用这里的材质，RViz 用 visual 里的颜色） -->
+  <gazebo reference="lidar_Link">
+    <material>Gazebo/Blue</material>
+  </gazebo>
+  <gazebo reference="lidar_rear_Link">
+    <material>Gazebo/Blue</material>
+  </gazebo>
+  <link
+    name="RF_Link">
+    <inertial>
+      <origin
+        xyz="-0.000359 -0.004895 -0.156109"
+        rpy="0 0 0" />
+      <mass
+        value="0.25572702083454" />
+      <inertia
+        ixx="0.000237"
+        ixy="0"
+        ixz="-0.000003"
+        iyy="0.000327"
+        iyz="0.000001"
+        izz="0.000243" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.09 0.09 0.09" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="RF"
+    type="revolute">
+    <origin
+      xyz="0.42318 -0.465 0.1905"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="RF_Link" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.5236"
+      upper="0.5236"
+      effort="22.5"
+      velocity="2.0" />
+  </joint>
+  <link
+    name="RF_W_Link">
+    <inertial>
+      <origin
+        xyz="0.000274 0.002439 -0.000948"
+        rpy="0 0 0" />
+      <mass
+        value="0.34824536669786" />
+      <inertia
+        ixx="0.001039"
+        ixy="-0"
+        ixz="-0"
+        iyy="0.001974"
+        iyz="0"
+        izz="0.001039" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <cylinder radius="0.18675" length="0.12" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.05 0.05 0.05 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <!-- 碰撞体用球而不是圆柱：前轮带转向角压在坡脚折线上起步时，圆柱的边缘会顶住坡面把车卡死
+             （仿真实测 5° 坡脚转向 0.2 rad 起步卡住，改成球后正常上坡）。外观仍是圆柱 -->
+        <sphere radius="0.18675" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="RF_W"
+    type="continuous">
+    <origin
+      xyz="0 0 -0.18675"
+      rpy="0 0 0" />
+    <parent
+      link="RF_Link" />
+    <child
+      link="RF_W_Link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      effort="90"
+      velocity="100" />
+  </joint>
+  <link
+    name="LF_Link">
+    <inertial>
+      <origin
+        xyz="-0.000406 -0.012109 -0.154549"
+        rpy="0 0 0" />
+      <mass
+        value="0.226290456645359" />
+      <inertia
+        ixx="0.000229"
+        ixy="0"
+        ixz="-0.000003"
+        iyy="0.000312"
+        iyz="0.000001"
+        izz="0.000237" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.09 0.09 0.09" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="LF"
+    type="revolute">
+    <origin
+      xyz="0.42318 0.465 0.19275"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="LF_Link" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.5236"
+      upper="0.5236"
+      effort="22.5"
+      velocity="2.0" />
+  </joint>
+  <link
+    name="LF_W_Link">
+    <inertial>
+      <origin
+        xyz="0.000274 0.002439 -0.000948"
+        rpy="0 0 0" />
+      <mass
+        value="0.34824536669786" />
+      <inertia
+        ixx="0.001039"
+        ixy="-0"
+        ixz="-0"
+        iyy="0.001974"
+        iyz="0"
+        izz="0.001039" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <cylinder radius="0.18675" length="0.12" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.05 0.05 0.05 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <sphere radius="0.18675" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="LF_W"
+    type="continuous">
+    <origin
+      xyz="0 0 -0.189"
+      rpy="0 0 0" />
+    <parent
+      link="LF_Link" />
+    <child
+      link="LF_W_Link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      effort="90"
+      velocity="100" />
+  </joint>
+  <link
+    name="LB_Link">
+    <inertial>
+      <origin
+        xyz="-0.000745 -0.006271 -0.16652"
+        rpy="0 0 0" />
+      <mass
+        value="0.232563891311353" />
+      <inertia
+        ixx="0.000197"
+        ixy="0"
+        ixz="-0.000003"
+        iyy="0.000292"
+        iyz="0.000001"
+        izz="0.000165" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.09 0.09 0.09" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.866666666666667 0.909803921568627 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="LB"
+    type="fixed">
+    <origin
+      xyz="-0.432 0.465 0.1905"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="LB_Link" />
+  </joint>
+  <link
+    name="LB_W_Link">
+    <inertial>
+      <origin
+        xyz="0.000183 0.002095 -0.001171"
+        rpy="0 0 0" />
+      <mass
+        value="0.348007115991486" />
+      <inertia
+        ixx="0.001039"
+        ixy="-0"
+        ixz="-0"
+        iyy="0.001974"
+        iyz="0"
+        izz="0.001039" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <cylinder radius="0.18675" length="0.12" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.05 0.05 0.05 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <sphere radius="0.18675" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="LB_W"
+    type="continuous">
+    <origin
+      xyz="0 0 -0.18675"
+      rpy="0 0 0" />
+    <parent
+      link="LB_Link" />
+    <child
+      link="LB_W_Link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      effort="90"
+      velocity="100" />
+  </joint>
+  <link
+    name="RB_Link">
+    <inertial>
+      <origin
+        xyz="0.000491 0.005573 -0.157305"
+        rpy="0 0 0" />
+      <mass
+        value="0.26173" />
+      <inertia
+        ixx="0.000239"
+        ixy="0"
+        ixz="0.000003"
+        iyy="0.000332"
+        iyz="-0.000001"
+        izz="0.000247" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.09 0.09 0.09" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.9098 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="RB"
+    type="fixed">
+    <origin
+      xyz="-0.432 -0.465 0.1905"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="RB_Link" />
+  </joint>
+  <link
+    name="RB_W_Link">
+    <inertial>
+      <origin
+        xyz="-0.000274 -0.002439 -0.000948"
+        rpy="0 0 0" />
+      <mass
+        value="0.34825" />
+      <inertia
+        ixx="0.001039"
+        ixy="0"
+        ixz="0"
+        iyy="0.001974"
+        iyz="0"
+        izz="0.001039" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <cylinder radius="0.18675" length="0.12" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.05 0.05 0.05 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="1.5708 0 0" />
+      <geometry>
+        <sphere radius="0.18675" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="RB_W"
+    type="continuous">
+    <origin
+      xyz="0 0 -0.18675"
+      rpy="0 0 0" />
+    <parent
+      link="RB_Link" />
+    <child
+      link="RB_W_Link" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      effort="90"
+      velocity="100" />
+  </joint>
+  <!-- 四个驱动轮的地面摩擦，之前没设过，用的是 ODE 默认值，导致轮子转起来但打滑、
+       车身几乎不走（wheel_W_Link 的转速换算出的线速度远大于 /odom 实测线速度） -->
+  <!-- 不要加 fdir1：它定义在车轮碰撞体坐标系里，会跟着车轮一起转，每转四分之一圈就与接触法向重合、
+       摩擦方向退化。平地上还能凑合，爬 10° 坡时后轮在坡底折线处附着失效、原地打滑（仿真实测：
+       带 fdir1 两次都卡在坡底，去掉后正常上坡）。mu1 = mu2 是各向同性摩擦，fdir1 本来也不起作用 -->
+  <!-- 轮子黑色：Gazebo 用这里的材质，RViz 用上面 visual 里的颜色 -->
+  <gazebo reference="RF_W_Link">
+    <material>Gazebo/Black</material>
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+  <gazebo reference="LF_W_Link">
+    <material>Gazebo/Black</material>
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+  <gazebo reference="LB_W_Link">
+    <material>Gazebo/Black</material>
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+  <gazebo reference="RB_W_Link">
+    <material>Gazebo/Black</material>
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+
+  <!-- 方向盘占位关节：插件要求 steering_wheel_joint 独立存在，不能复用 LF，
+       否则 LF 会同时被转向 PID 和方向盘控制逻辑争抢，导致左轮打死抖动 -->
+  <link name="steering_wheel_Link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.1" />
+      <inertia ixx="0.000225" ixy="0" ixz="0" iyy="0.000225" iyz="0" izz="0.000225" />
+    </inertial>
+  </link>
+  <joint
+    name="steering_wheel_joint"
+    type="continuous">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="steering_wheel_Link" />
+    <axis
+      xyz="1 0 0" />
+  </joint>
+    <!-- Gazebo 阿克曼底盘驱动插件 -->
+  <gazebo>
+    <plugin name="ackermann_drive" filename="libagv_ackermann_drive.so">
+      <ros>
+        <namespace>/</namespace>
+        <!-- 本插件把 angular.z 当作前轮转角（rad）而不是角速度，标准 Twist 不能直接给它，
+             由 agv_nav 的 cmd_vel_to_ackermann 节点把 /cmd_vel 换算后发到这里 -->
+        <remapping>cmd_vel:=cmd_vel_ackermann</remapping>
+        <!-- 插件的里程计没有噪声，等于车的真实位姿：只给 wheel_odom_sim 当输入，/odom 和 TF 由 EKF 发布 -->
+        <remapping>odom:=wheel/truth</remapping>
+      </ros>
+
+      <update_rate>100.0</update_rate>
+
+      <!-- 前轮驱动关节 -->
+      <front_left_joint>LF_W</front_left_joint>
+      <front_right_joint>RF_W</front_right_joint>
+      <!-- 后轮驱动关节 -->
+      <rear_left_joint>LB_W</rear_left_joint>
+      <rear_right_joint>RB_W</rear_right_joint>
+      <!-- 前轮转向关节 -->
+      <left_steering_joint>LF</left_steering_joint>
+      <right_steering_joint>RF</right_steering_joint>
+      <!-- 车上没有实体方向盘，用独立占位关节，不能复用真实转向关节 -->
+      <steering_wheel_joint>steering_wheel_joint</steering_wheel_joint>
+
+      <!-- max_steer 是车辆中心线的等效转角，插件据此按 Ackermann 几何算内外轮角度。
+           内侧轮关节限位 ±30°，对应中心转角 atan(tan30°/(1+0.544·tan30°)) = 0.414 rad，
+           最小转弯半径（后轴中心）约 1.95 m。设成 30° 会让内侧轮目标超出限位，转向 PID 积分饱和 -->
+      <max_steer>0.414</max_steer>
+      <max_steering_angle>7.85</max_steering_angle>
+      <!-- 最大车速 2 m/s，沿用旧控制器 MAX_CHASSIS_SPEED_ -->
+      <max_speed>2.0</max_speed>
+
+      <!-- 转向纯 P 克服不了轮胎扭转摩擦，外侧轮只能打到目标的 2/3，加积分项 -->
+      <left_steering_pid_gain>13.5 11.25 0.675</left_steering_pid_gain>
+      <left_steering_i_range>-11.25 11.25</left_steering_i_range>
+      <right_steering_pid_gain>13.5 11.25 0.675</right_steering_pid_gain>
+      <right_steering_i_range>-11.25 11.25</right_steering_i_range>
+      <!-- 速度环误差单位是后轮 rad/s，插件 100 Hz 更新。D 项会把轮速噪声放大成 ±几十 N·m 的抖动力矩
+           （超过关节力矩上限、正负抵消），导致车推不动、倒车不动、松油门后轮子空转，所以 D=0。
+           纯 P 有 15~18% 稳态误差，加积分项消除；i_range 为积分项力矩上下限（为 0 时积分被限死） -->
+      <linear_velocity_pid_gain>11.25 4.5 0</linear_velocity_pid_gain>
+      <linear_velocity_i_range>-22.5 22.5</linear_velocity_i_range>
+
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>false</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+    </plugin>
+  </gazebo>
+
+  <!-- base_link 在世界系下的真值位姿 /ground_truth：测试时用来评估定位、到点误差 -->
+  <gazebo>
+    <plugin name="ground_truth" filename="libgazebo_ros_p3d.so">
+      <ros>
+        <remapping>odom:=ground_truth</remapping>
+      </ros>
+      <body_name>base_link</body_name>
+      <frame_name>world</frame_name>
+      <update_rate>50</update_rate>
+    </plugin>
+  </gazebo>
+
+  <!-- Mid-360 仿真雷达，挂在现有 lidar_Link 上（这个 link 目前只有可视化 mesh，没有真正的传感器逻辑） -->
+  <!-- lidar_Link 已经有真实外壳网格了，mid360 宏自带的占位方块视觉会跟它重叠，关掉 -->
+  <xacro:mid360 name="livox_sensor" parent="lidar_Link" topic="livox/lidar" visual="false">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:mid360>
+  <xacro:mid360 name="livox_sensor_rear" parent="lidar_rear_Link" topic="livox/lidar_rear" visual="false">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:mid360>
+
+  <!-- IMU，Cartographer 3D 必需。放在 base_link 原点，这样 map 坐标系原点即建图起点的 base_link -->
+  <link name="imu_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.01" />
+      <inertia ixx="0.000002" ixy="0" ixz="0" iyy="0.000002" iyz="0" izz="0.000002" />
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+  </joint>
+
+  <gazebo reference="imu_link">
+    <sensor type="imu" name="imu_sensor">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <!-- 零偏符号每次启动随机，大小按开机标定后的 MEMS IMU 取：陀螺约 0.03°/s，加速度计约 1 mg -->
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev><bias_mean>5e-4</bias_mean></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev><bias_mean>5e-4</bias_mean></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev><bias_mean>5e-4</bias_mean></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev><bias_mean>1e-2</bias_mean></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev><bias_mean>1e-2</bias_mean></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev><bias_mean>1e-2</bias_mean></noise></z>
+        </linear_acceleration>
+      </imu>
+      <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+        <ros>
+          <namespace>/</namespace>
+          <remapping>~/out:=imu</remapping>
+        </ros>
+        <!-- 固定关节会被合并进 base_link，不写的话 frame_id 会变成 base_link -->
+        <frame_name>imu_link</frame_name>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- 深度相机，装在筱体前端面，朝前水平安装 -->
+  <link name="camera_Link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.1" />
+      <inertia ixx="0.000164" ixy="0" ixz="0" iyy="0.000023" iyz="0" izz="0.000164" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.0375 0.135 0.0375" />
+      </geometry>
+      <material name="camera_color">
+        <color rgba="0.95 0.8 0.1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.0375 0.135 0.0375" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="0.57 0 0.24" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="camera_Link" />
+  </joint>
+  <!-- 光学坐标系（z 朝前、x 朝右、y 朝下）：ROS 相机图像和深度点云按这个约定，RViz Camera 显示也按它渲染。
+       图像发在 camera_Link（x 朝前、z 朝上）上的话，RViz 会以为相机朝天，深度点云也是竖着的 -->
+  <link name="camera_optical_frame" />
+  <joint name="camera_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}" />
+    <parent link="camera_Link" />
+    <child link="camera_optical_frame" />
+  </joint>
+
+  <gazebo reference="camera_Link">
+    <material>Gazebo/Yellow</material>
+    <sensor type="depth" name="camera_Link">
+      <update_rate>30</update_rate>
+      <visualize>false</visualize>
+      <camera>
+        <horizontal_fov>1.5184</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>10.0</far>
+        </clip>
+        <depth_camera>
+        </depth_camera>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/</namespace>
+        </ros>
+        <camera_name>camera</camera_name>
+        <!-- camera_Link 是固定关节挂在 base_link 上，URDF->SDF 转换会把它合并进 base_link，
+             不指定的话 frame_name 会默认变成 base_link，跟相机实际位置对不上；用光学坐标系（见上面 camera_optical_joint） -->
+        <frame_name>camera_optical_frame</frame_name>
+        <min_depth>0.1</min_depth>
+        <max_depth>10.0</max_depth>
+      </plugin>
+    </sensor>
+  </gazebo>
+</robot>

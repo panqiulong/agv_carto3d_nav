@@ -1,0 +1,73 @@
+diff --git a/teb_local_planner/src/optimal_planner.cpp b/teb_local_planner/src/optimal_planner.cpp
+index 1ab883f..afe08d8 100644
+--- a/teb_local_planner/src/optimal_planner.cpp
++++ b/teb_local_planner/src/optimal_planner.cpp
+@@ -1146,8 +1146,23 @@ bool TebOptimalPlanner::getVelocityCommand(double& vx, double& vy, double& omega
+   }
+   look_ahead_poses = std::max(1, std::min(look_ahead_poses, teb_.sizePoses() - 1));
+   double dt = 0.0;
++  double first_dir = 0.0;
+   for(int counter = 0; counter < look_ahead_poses; ++counter)
+   {
++    // AGV2 修改：前瞻窗口不跨换向点。速度用窗口两端的位姿算，跨过换向点时前进和倒车的位移互相抵消，
++    // 速度和方向都会算错（control_look_ahead_poses = 5 时换向机动用时变成 3~5 倍，还有超时）
++    const PoseSE2& pose = teb_.Pose(counter);
++    const double dir = (teb_.Pose(counter + 1).position() - pose.position()).dot(
++      Eigen::Vector2d(std::cos(pose.theta()), std::sin(pose.theta())));
++    if (counter == 0)
++    {
++      first_dir = dir;
++    }
++    else if (dir * first_dir < 0.0)
++    {
++      look_ahead_poses = counter;
++      break;
++    }
+     dt += teb_.TimeDiff(counter);
+     if(dt >= cfg_->trajectory.dt_ref * look_ahead_poses)  // TODO: change to look-ahead time? Refine trajectory?
+     {
+diff --git a/teb_local_planner/src/teb_local_planner_ros.cpp b/teb_local_planner/src/teb_local_planner_ros.cpp
+index 6060d8b..559bf5c 100644
+--- a/teb_local_planner/src/teb_local_planner_ros.cpp
++++ b/teb_local_planner/src/teb_local_planner_ros.cpp
+@@ -654,8 +654,11 @@ bool TebLocalPlannerROS::pruneGlobalPlan(const geometry_msgs::msg::PoseStamped&
+   {
+     // transform robot pose into the plan frame (we do not wait here, since pruning not crucial, if missed a few times)
+     //geometry_msgs::msg::TransformStamped global_to_plan_transform = tf_->lookupTransform(global_plan.front().header.frame_id, global_pose.header.frame_id, tf2::timeFromSec(0));
++    // AGV2 修改：同 transformGlobalPlan，时间戳清零表示用最新的变换
++    geometry_msgs::msg::PoseStamped latest_pose = global_pose;
++    latest_pose.header.stamp = builtin_interfaces::msg::Time();
+     geometry_msgs::msg::PoseStamped robot = tf_->transform(
+-              global_pose,
++              latest_pose,
+               global_plan.front().header.frame_id);
+ 
+     //robot.setData( global_to_plan_transform * global_pose );
+@@ -712,10 +715,11 @@ bool TebLocalPlannerROS::transformGlobalPlan(const std::vector<geometry_msgs::ms
+     }
+ 
+     // get plan_to_global_transform from plan frame to global_frame
++    // AGV2 修改：用最新的变换，不按路径时间戳查。路径时间戳是规划时刻：定位 map->odom 的最新数据略晚于“现在”时
++    // 报 extrapolation into the future；按需重规划时路径能存活 15 s，超过 TF 缓存 10 s 又报 extrapolation into the past。
++    // map->odom 变化慢，用最新值足够
+     geometry_msgs::msg::TransformStamped plan_to_global_transform = tf_->lookupTransform(
+-                global_frame, tf2_ros::fromMsg(plan_pose.header.stamp),
+-                plan_pose.header.frame_id, tf2::timeFromSec(0),
+-                plan_pose.header.frame_id, tf2::durationFromSec(0.5));
++                global_frame, plan_pose.header.frame_id, tf2::TimePointZero);
+ 
+ //    tf_->waitForTransform(global_frame, ros::Time::now(),
+ //    plan_pose.header.frame_id, plan_pose.header.stamp,
+@@ -725,7 +729,11 @@ bool TebLocalPlannerROS::transformGlobalPlan(const std::vector<geometry_msgs::ms
+ //    plan_pose.header.frame_id, plan_to_global_transform);
+ 
+     //let's get the pose of the robot in the frame of the plan
+-    geometry_msgs::msg::PoseStamped robot_pose = tf_->transform(global_pose, plan_pose.header.frame_id);
++    // AGV2 修改：同上，车的位姿时间戳是“现在”，而 map->odom 的最新数据可能略早，按时间戳查会报 extrapolation into the future
++    // （连续几帧失败时整段导航被中止）。时间戳清零表示用最新的变换
++    geometry_msgs::msg::PoseStamped latest_pose = global_pose;
++    latest_pose.header.stamp = builtin_interfaces::msg::Time();
++    geometry_msgs::msg::PoseStamped robot_pose = tf_->transform(latest_pose, plan_pose.header.frame_id);
+ 
+     //we'll discard points on the plan that are outside the local costmap
+     double dist_threshold = std::max(costmap.getSizeInCellsX() * costmap.getResolution() / 2.0,

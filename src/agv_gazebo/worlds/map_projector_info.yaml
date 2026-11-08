@@ -1,0 +1,2 @@
+# 由 gen_warehouse_world.py 生成；Autoware 的地图投影：Local = 直接用 .osm 里的 local_x / local_y
+projector_type: Local

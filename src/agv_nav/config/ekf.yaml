@@ -1,0 +1,28 @@
+# 融合轮速和 IMU，发布 /odom 和 TF odom->base_link。长期漂移由 Cartographer 的 map->odom 修正，这里只要短时平滑连续
+ekf_filter_node:
+  ros__parameters:
+    use_sim_time: true
+    frequency: 50.0
+    sensor_timeout: 0.2
+    two_d_mode: false               # 场地有坡道，要输出俯仰和 z
+    publish_tf: true
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # 配置顺序：x y z / roll pitch yaw / vx vy vz / vroll vpitch vyaw / ax ay az
+    # 轮速：只用车体速度。base_link 在后轴前 0.432 m，转弯时 vy = 0.432 * wz，不能当 0
+    odom0: /wheel/odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  true,
+                   false, false, true,
+                   false, false, false]
+    # IMU：Madgwick 解算的横滚 / 俯仰和陀螺角速度。没有磁力计，绝对航向不可用；加速度不积分，低速时信噪比太低
+    imu0: /imu/filtered
+    imu0_config: [false, false, false,
+                  true,  true,  false,
+                  false, false, false,
+                  true,  true,  true,
+                  false, false, false]

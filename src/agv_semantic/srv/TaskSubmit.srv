@@ -1,0 +1,8 @@
+# 提交入库 / 出库任务；source、target 为空表示自动选择
+string type       # inbound / outbound
+string source
+string target
+---
+bool success
+string message
+int32 id

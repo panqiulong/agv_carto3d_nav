@@ -1,0 +1,22 @@
+# 由 gen_warehouse_world.py 生成的任务配置模板（初始库存），复制到地图旁边使用
+home: HOME
+dwell: 5.0
+receiving:
+- R1
+- R2
+shipping:
+- S1
+- S2
+slots:
+  A1: false
+  A2: true
+  A3: false
+  A4: true
+  A5: false
+  A6: false
+  A7: false
+  A8: false
+  M1: false
+  M2: true
+  M3: false
+  M4: false

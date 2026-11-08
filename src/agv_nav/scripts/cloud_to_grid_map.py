@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
-"""把 Cartographer 3D 的 /scan_matched_points2（map 坐标系，已重力对齐）投影成 Nav2 用的 2D 栅格。
+"""把 Cartographer 3D 的 /scan_matched_points2（map 坐标系）变成 2.5D 地形：高程、障碍、坡度、台阶、可通行代价。
 
-Cartographer 3D 子图自带的 2D 投影会把地面也算成占用，不能直接给 Nav2 用，所以按高度自己分：
-  - 接近地面的点   -> 该格子被观测为空闲
-  - 车体高度内的点 -> 该格子被观测为障碍（累计次数 >= min_occupied_hits、不少于地面点数的 0.3 倍、
-                      不低于 5x5 邻域峰值的 min_peak_ratio 倍，且不是孤立单格，才算占用）
-  - 都没有         -> 未知
-map 系 z 原点不一定在地面上，地面高度 = 该帧跟踪系（imu_link，与 base_link 重合）的 z - base_height。
-
-建图过程中实时发布 /map 供查看。每帧点云连同当时的跟踪系位姿都会保存下来；
+计算在 terrain.py 里：每帧点云在单帧内部判断障碍、台阶、坡度（高度关系只在一帧内比较，不受 SLAM 高度漂移影响），
+再按每帧位姿的水平位置投票合成全局可通行代价（spec 修订 1）。
+建图过程中每 preview_period 秒用一部分帧预览一次 /map；每帧点云连同当时的跟踪系位姿都会保存下来。
 建图结束后调用 ~/rebuild_from_trajectory，用 Cartographer 回环优化后的轨迹（/trajectory_query）
-把每帧重新投影一遍再生成栅格，消掉建图过程中漂移造成的墙体变厚，再用 map_saver_cli 保存 /map。
+把每帧重新投影一遍再算各层；参数 elevation_path 非空时同时把各层存成 npz（高程只用于显示和评估）。
+/map 发布的是连续代价（-1 未知，0..100），要用 map_saver_cli --mode raw 保存。
 """
+from dataclasses import fields
+
 import numpy as np
 import rclpy
 import tf2_ros
 from cartographer_ros_msgs.srv import TrajectoryQuery
+from grid_map_msgs.msg import GridMap
 from nav_msgs.msg import OccupancyGrid
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.time import Time
-from scipy.ndimage import label, maximum_filter
 from scipy.spatial.transform import Rotation, Slerp
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
+from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 from std_srvs.srv import Trigger
+
+from terrain import FRAME_PARAMS, UNKNOWN, TerrainParams, VoteGrid, frame_layers, to_grid_map_data
 
 
 def stamp_to_sec(stamp):
@@ -35,37 +36,34 @@ def stamp_to_sec(stamp):
 class CloudToGridMap(Node):
     def __init__(self):
         super().__init__('cloud_to_grid_map')
-        self.resolution = self.declare_parameter('resolution', 0.05).value
-        size = self.declare_parameter('size', 40.0).value
+        # 以 map 原点（出生点）为中心
+        size = self.declare_parameter('size', 130.0).value          # 盖住仓库南边的公路和围栏（至少 120 m）
         # Cartographer 的 tracking_frame，/trajectory_query 返回的就是它在 map 系下的位姿
         self.tracking_frame = self.declare_parameter('tracking_frame', 'imu_link').value
         self.trajectory_id = self.declare_parameter('trajectory_id', 0).value
-        # 跟踪系（与 base_link 重合）离地高度（车轮中心 z 0.0025 - 轮半径 0.1245）
-        self.base_height = self.declare_parameter('base_height', 0.122).value
-        self.ground_tolerance = self.declare_parameter('ground_tolerance', 0.05).value
-        self.obstacle_min_height = self.declare_parameter('obstacle_min_height', 0.08).value
-        self.obstacle_max_height = self.declare_parameter('obstacle_max_height', 1.2).value
-        self.min_occupied_hits = self.declare_parameter('min_occupied_hits', 3).value
-        # 建图中位姿瞬时误差会把墙点投到地面格子上，这类格子同时有大量地面点；
-        # 真实障碍格子几乎看不到地面，所以要求障碍点数不少于地面点数的这个倍数
-        self.min_obstacle_ground_ratio = self.declare_parameter('min_obstacle_ground_ratio', 0.3).value
-        # 位姿误差会让墙面点散到相邻格子里，只按“命中 >= 3”判占用会取到误差分布的尾部，墙向内变厚约 10 cm。
-        # 要求命中数不低于 5x5 邻域峰值的这个比例，只保留靠近真实表面的格子（仿真实测：
-        # 远离障碍的误占用格 192 -> 36，墙面向内偏差 p99 0.225 -> 0.125 m），并去掉孤立的单个占用格
-        self.min_peak_ratio = self.declare_parameter('min_peak_ratio', 0.2).value
-
-        self.cells = int(round(size / self.resolution))
-        self.origin = -size / 2.0
-        self.ground_hits = np.zeros((self.cells, self.cells), np.int32)
-        self.obstacle_hits = np.zeros((self.cells, self.cells), np.int32)
+        # 建图时预览：每隔 preview_period 秒，用每 preview_decimation 帧取一帧算一次
+        self.preview_decimation = self.declare_parameter('preview_decimation', 5).value
+        self.declare_parameter('elevation_path', '')
+        self.terrain = TerrainParams(**{f.name: self.declare_parameter(f.name, f.default).value
+                                        for f in fields(TerrainParams)})
+        # 单帧只用水平这么远的点（姿态误差 0.5° 在 5 m 处约 4 cm，低于障碍阈值 0.08 m）
+        self.frame_range = self.declare_parameter('frame_range', 5.0).value
+        res = self.terrain.resolution
+        self.shape = (int(round(size / res)),) * 2
+        self.origin = (-size / 2.0, -size / 2.0)
         # 每帧：(时间, 当时的 map->tracking 4x4 位姿, map 系下的点 float32)
         self.frames = []
+        self.previewed = 0
+        # 预览用的投票网格只累加新帧，避免每次把所有帧重算一遍（帧多了会占满执行器、丢点云）
+        self.preview_grid = VoteGrid(self.origin, self.shape, self.terrain.resolution)
+        self.rebuilt = False
 
         qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.map_pub = self.create_publisher(OccupancyGrid, 'map', qos)
-        self.create_subscription(PointCloud2, 'scan_matched_points2', self.on_cloud, 10)
+        self.grid_map_pub = self.create_publisher(GridMap, 'elevation_map', qos)
+        self.create_subscription(PointCloud2, 'scan_matched_points2', self.on_cloud, 50)
         self.create_service(Trigger, '~/rebuild_from_trajectory', self.on_rebuild)
-        self.create_timer(1.0, self.publish_map)
+        self.create_timer(self.declare_parameter('preview_period', 5.0).value, self.on_preview)
         self.frame_id = 'map'
         self.tf_buffer = tf2_ros.Buffer()
         # TF 单独线程接收，否则点云回调占满单线程执行器，TF 缓存落后导致查询失败、整帧被丢
@@ -94,22 +92,31 @@ class CloudToGridMap(Node):
         if pose is None:
             return
         pts = point_cloud2.read_points_numpy(msg, field_names=('x', 'y', 'z'), skip_nans=True).astype(np.float32)
-        if pts.size == 0:
-            return
-        self.frames.append((stamp_to_sec(msg.header.stamp), pose, pts))
-        self.accumulate(pts, pose[2, 3] - self.base_height, self.ground_hits, self.obstacle_hits)
+        # 单帧分类只用水平 frame_range 内的点；重建时位姿修正实测最大约 2.4 m，留 3 m 余量，其余不存（省内存）
+        d = np.hypot(pts[:, 0] - pose[0, 3], pts[:, 1] - pose[1, 3])
+        pts = pts[d <= self.frame_range + 3.0]
+        if pts.size:
+            self.frames.append((stamp_to_sec(msg.header.stamp), pose, pts))
 
-    def accumulate(self, pts, ground_z, ground_hits, obstacle_hits):
-        ix = np.floor((pts[:, 0] - self.origin) / self.resolution).astype(np.int64)
-        iy = np.floor((pts[:, 1] - self.origin) / self.resolution).astype(np.int64)
-        inside = (ix >= 0) & (ix < self.cells) & (iy >= 0) & (iy < self.cells)
-        h = pts[:, 2] - ground_z
-        ground = inside & (np.abs(h) < self.ground_tolerance)
-        obstacle = inside & (h > self.obstacle_min_height) & (h < self.obstacle_max_height)
-        flat = iy * self.cells + ix
-        size = self.cells * self.cells
-        ground_hits += np.bincount(flat[ground], minlength=size).reshape(self.cells, self.cells).astype(np.int32)
-        obstacle_hits += np.bincount(flat[obstacle], minlength=size).reshape(self.cells, self.cells).astype(np.int32)
+    def on_preview(self):
+        if self.rebuilt or len(self.frames) == self.previewed:
+            return
+        for i in range(self.previewed, len(self.frames)):
+            if i % self.preview_decimation == 0:
+                self.add_to(self.preview_grid, self.frames[i][2], self.frames[i][1][:3, 3])
+        self.previewed = len(self.frames)
+        self.publish(self.preview_grid.finalize(self.terrain))
+
+    def vote(self, frames, start_xy=None):
+        """每帧：点减去该帧跟踪系位置得到局部坐标（重力对齐、朝向同 map），单帧分类后按水平位置投票"""
+        grid = VoteGrid(self.origin, self.shape, self.terrain.resolution)
+        for pts, center in frames:
+            self.add_to(grid, pts, center)
+        return grid.finalize(self.terrain, start_xy=start_xy)
+
+    def add_to(self, grid, pts, center):
+        layers, origin, _ = frame_layers(pts - center.astype(np.float32), self.frame_range, FRAME_PARAMS)
+        grid.add_frame(layers, origin, FRAME_PARAMS.resolution, center)
 
     def on_rebuild(self, request, response):
         if not self.frames:
@@ -137,53 +144,80 @@ class CloudToGridMap(Node):
         new_rot = Slerp(times, rotations)(frame_times).as_matrix()
         new_pos = np.stack([np.interp(frame_times, times, positions[:, k]) for k in range(3)], axis=1)
 
-        ground_hits = np.zeros_like(self.ground_hits)
-        obstacle_hits = np.zeros_like(self.obstacle_hits)
-        shift = []
+        corrected, shift = [], []
         for (_, old, pts), rot, pos in zip(self.frames, new_rot, new_pos):
             new = np.eye(4)
             new[:3, :3], new[:3, 3] = rot, pos
             correction = new @ np.linalg.inv(old)
-            corrected = pts @ correction[:3, :3].T.astype(np.float32) + correction[:3, 3].astype(np.float32)
-            self.accumulate(corrected, pos[2] - self.base_height, ground_hits, obstacle_hits)
+            corrected.append((pts @ correction[:3, :3].T.astype(np.float32) + correction[:3, 3].astype(np.float32), pos))
             shift.append(np.linalg.norm(correction[:2, 3]))
-        self.ground_hits, self.obstacle_hits = ground_hits, obstacle_hits
-        self.publish_map()
+        # 以建图起点为种子去掉够不着的“小岛”（箱子、货车的平顶面）
+        layers = self.vote(corrected, start_xy=tuple(new_pos[0][:2]))
+        self.rebuilt = True
+        self.publish(layers, with_grid_map=True)
+        path = self.get_parameter('elevation_path').value
+        if path:
+            self.save_npz(path, layers)
         response.success = True
         response.message = (f'rebuilt from {len(self.frames)} clouds and {len(nodes)} optimized nodes, '
-                            f'pose correction mean {np.mean(shift):.3f} m max {np.max(shift):.3f} m')
+                            f'pose correction mean {np.mean(shift):.3f} m max {np.max(shift):.3f} m'
+                            + (f'; elevation saved to {path}' if path else ''))
         self.get_logger().info(response.message)
         return response
 
-    def publish_map(self):
-        occupied = ((self.obstacle_hits >= self.min_occupied_hits) &
-                    (self.obstacle_hits >= self.min_obstacle_ground_ratio * self.ground_hits) &
-                    (self.obstacle_hits >= self.min_peak_ratio * maximum_filter(self.obstacle_hits, size=5)))
-        labels, _ = label(occupied, structure=np.ones((3, 3)))
-        occupied &= np.bincount(labels.ravel())[labels] >= 2
-        free = (self.ground_hits > 0) & ~occupied
-        observed_rows = np.flatnonzero((occupied | free).any(axis=1))
-        observed_cols = np.flatnonzero((occupied | free).any(axis=0))
-        if observed_rows.size == 0:
-            return
-        # 只发布有观测的包围盒，保存出来的 pgm 不会是一大片未知
-        r0, r1 = int(observed_rows[0]), int(observed_rows[-1]) + 1
-        c0, c1 = int(observed_cols[0]), int(observed_cols[-1]) + 1
-        grid = np.full((r1 - r0, c1 - c0), -1, np.int8)
-        grid[free[r0:r1, c0:c1]] = 0
-        grid[occupied[r0:r1, c0:c1]] = 100
+    def crop(self, layers):
+        """只保留有观测的包围盒，返回 (行切片, 列切片, 裁剪后的 origin)"""
+        known = layers.cost != UNKNOWN
+        rows, cols = np.flatnonzero(known.any(axis=1)), np.flatnonzero(known.any(axis=0))
+        if rows.size == 0:
+            return None
+        r, c = slice(int(rows[0]), int(rows[-1]) + 1), slice(int(cols[0]), int(cols[-1]) + 1)
+        res = self.terrain.resolution
+        return r, c, (self.origin[0] + c.start * res, self.origin[1] + r.start * res)
 
+    def publish(self, layers, with_grid_map=False):
+        cropped = self.crop(layers)
+        if cropped is None:
+            return
+        r, c, origin = cropped
+        res = self.terrain.resolution
+        stamp = self.get_clock().now().to_msg()
+        cost = layers.cost[r, c]
         msg = OccupancyGrid()
-        msg.header.frame_id = self.frame_id
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.info.resolution = self.resolution
-        msg.info.width = c1 - c0
-        msg.info.height = r1 - r0
-        msg.info.origin.position.x = self.origin + c0 * self.resolution
-        msg.info.origin.position.y = self.origin + r0 * self.resolution
+        msg.header.frame_id, msg.header.stamp = self.frame_id, stamp
+        msg.info.resolution = res
+        msg.info.height, msg.info.width = cost.shape
+        msg.info.origin.position.x, msg.info.origin.position.y = origin
         msg.info.origin.orientation.w = 1.0
-        msg.data = grid.ravel().tolist()
+        msg.data = cost.ravel().tolist()
         self.map_pub.publish(msg)
+        # GridMap 消息很大（上百万个 float），只在 rebuild 后或有人订阅时发
+        if not (with_grid_map or self.grid_map_pub.get_subscription_count() > 0):
+            return
+        rows, cols = cost.shape
+        gm = GridMap()
+        gm.header.frame_id, gm.header.stamp = self.frame_id, stamp
+        gm.info.resolution = res
+        gm.info.length_x, gm.info.length_y = cols * res, rows * res
+        gm.info.pose.position.x = origin[0] + cols * res / 2
+        gm.info.pose.position.y = origin[1] + rows * res / 2
+        gm.info.pose.orientation.w = 1.0
+        gm.basic_layers = ['elevation']
+        for name, arr in (('elevation', layers.elevation[r, c]), ('slope', layers.slope_deg[r, c]),
+                          ('step', layers.step[r, c]), ('cost', np.where(cost < 0, np.nan, cost))):
+            data = Float32MultiArray()
+            data.layout.dim = [MultiArrayDimension(label='column_index', size=rows, stride=rows * cols),
+                               MultiArrayDimension(label='row_index', size=cols, stride=cols)]
+            data.data = to_grid_map_data(arr).tolist()
+            gm.layers.append(name)
+            gm.data.append(data)
+        self.grid_map_pub.publish(gm)
+
+    def save_npz(self, path, layers):
+        r, c, origin = self.crop(layers)
+        np.savez_compressed(path, elevation=layers.elevation[r, c], slope_deg=layers.slope_deg[r, c],
+                            step=layers.step[r, c], cost=layers.cost[r, c], obstacle=layers.obstacle[r, c],
+                            origin=np.array(origin), resolution=self.terrain.resolution)
 
 
 def main():

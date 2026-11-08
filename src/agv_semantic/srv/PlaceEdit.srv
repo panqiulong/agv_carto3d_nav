@@ -1,0 +1,6 @@
+# 添加（取车当前位置）/ 删除一个地点
+string name
+bool overwrite    # 添加时名字已存在是否覆盖；删除时忽略
+---
+bool success
+string message

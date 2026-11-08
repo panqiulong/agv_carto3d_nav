@@ -1,0 +1,83 @@
+# TEB 局部控制器（controller:=teb 时替换 nav2_params.yaml 里 controller_server 的 FollowPath 段）
+# 输出 vx / wz（不直接输出转角），照常经过 velocity_smoother 和 cmd_vel_to_ackermann。
+# 速度 / 转弯半径与 MPPI 一致：TEB 约束的是 v / omega，和 MPPI 的 vx / wz 一样是后轴半径，见 nav2_params.yaml 开头
+FollowPath:
+  plugin: "teb_local_planner::TebLocalPlannerROS"
+  odom_topic: odom
+
+  # 轨迹
+  teb_autosize: 1.0                            # TEB 声明为 double，写 true 会启动失败
+  dt_ref: 0.3
+  dt_hysteresis: 0.1
+  max_samples: 500
+  # 控制量默认只取轨迹第一段（约 0.15 m），朝向差 1° 就是 0.06 rad/s，前轮约 6°，直线上方向盘一直小幅摇摆。
+  # 取前 5 段：直线上左轮转角 std 0.073 -> 0.011 rad，弯道最大偏差 0.18 -> 0.28 m。
+  # 大于 1 时依赖 TEB 补丁里“前瞻窗口不跨换向点”的修改，否则换向机动严重退化，见 docs/debugging-notes.md 第 29 条
+  control_look_ahead_poses: 5
+  global_plan_overwrite_orientation: false     # Hybrid-A* 路径自带朝向（含倒车段）
+  allow_init_with_backwards_motion: true       # 目标在车后方时允许以倒车初始化
+  max_global_plan_lookahead_dist: 3.0
+  global_plan_viapoint_sep: 0.5                # 沿全局路径放途经点，倒车段 / 换向点也跟着路径走
+  global_plan_prune_distance: 1.0
+  exact_arc_length: false
+  feasibility_check_no_poses: 3
+  publish_feedback: false
+
+  # 车（阿克曼，车不能原地转）
+  max_vel_x: 0.5
+  max_vel_x_backwards: 0.3
+  max_vel_theta: 0.25                          # 0.5 m/s / 2.2 m ≈ 0.23
+  acc_lim_x: 0.5
+  acc_lim_theta: 0.5
+  min_turning_radius: 2.2
+  wheelbase: 0.855
+  cmd_angle_instead_rotvel: false
+  footprint_model:
+    type: "polygon"
+    vertices: "[[0.60, 0.54], [0.60, -0.54], [-0.60, -0.54], [-0.60, 0.54]]"   # 与代价地图 footprint 一致
+
+  free_goal_vel: false
+
+  # 障碍
+  min_obstacle_dist: 0.2                       # 到车身轮廓的距离
+  inflation_dist: 0.5
+  include_costmap_obstacles: true
+  costmap_obstacles_behind_robot_dist: 1.5
+  obstacle_poses_affected: 15
+  include_dynamic_obstacles: false
+  costmap_converter_plugin: "costmap_converter::CostmapToPolygonsDBSMCCH"   # 货架等大片障碍转成多边形，比逐格点障碍快
+  costmap_converter_spin_thread: true
+  costmap_converter_rate: 5
+
+  # 优化
+  no_inner_iterations: 5
+  no_outer_iterations: 4
+  optimization_activate: true
+  optimization_verbose: false
+  penalty_epsilon: 0.05
+  obstacle_cost_exponent: 4.0
+  weight_max_vel_x: 2.0
+  weight_max_vel_theta: 1.0
+  weight_acc_lim_x: 1.0
+  weight_acc_lim_theta: 1.0
+  weight_kinematics_nh: 1000.0
+  weight_kinematics_forward_drive: 1.0         # 小：倒车只稍有惩罚，按全局路径决定方向
+  weight_kinematics_turning_radius: 5.0        # 转弯半径是软约束，加大权重
+  weight_optimaltime: 1.0
+  weight_shortest_path: 0.0
+  weight_obstacle: 100.0
+  weight_inflation: 0.2
+  weight_viapoint: 10.0
+  weight_adapt_factor: 2.0
+
+  # 同伦类多路径规划：本机 CPU 跑 MPPI 已经掉帧，关掉
+  enable_homotopy_class_planning: false
+
+  # 恢复
+  shrink_horizon_backup: true
+  shrink_horizon_min_duration: 10.0
+  oscillation_recovery: true
+  oscillation_v_eps: 0.1
+  oscillation_omega_eps: 0.1
+  oscillation_recovery_min_duration: 10.0
+  oscillation_filter_duration: 10.0

@@ -2,6 +2,7 @@
   基于 Nav2 Humble 默认的 navigate_to_pose_w_replanning_and_recovery.xml。
   Ackermann 车不能原地旋转，把恢复动作里的 Spin 换成向前直行（DriveOnHeading），
   与 BackUp 配合：车尾贴障碍时向前脱困，车头贴障碍时后退脱困。
+  全局路径只在需要时重规划，规划后经 smoother_server（约束平滑器）平滑。
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -9,7 +10,27 @@
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="1.0">
           <RecoveryNode number_of_retries="1" name="ComputePathToPose">
-            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <!-- 只在目标变了、路径被障碍挡住或已用了 15 s 时才重规划：Hybrid-A* 每次从当前位姿重新搜索，
+                 1 Hz 无条件重规划时路径在“先倒车再前进”和“直接前进”等方案之间来回跳，车被拽得来回摆 -->
+            <Fallback name="ReplanIfNeeded">
+              <ReactiveSequence name="KeepCurrentPath">
+                <Inverter>
+                  <PathExpiringTimer seconds="15" path="{path}"/>
+                </Inverter>
+                <Inverter>
+                  <GlobalUpdatedGoal/>
+                </Inverter>
+                <IsPathValid path="{path}"/>
+              </ReactiveSequence>
+              <Sequence name="ComputeAndSmoothPath">
+                <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+                <!-- 平滑失败（超时、平滑后碰撞）时沿用规划器原路径 -->
+                <ForceSuccess>
+                  <SmoothPath unsmoothed_path="{path}" smoothed_path="{path}" smoother_id="constrained_smoother"
+                              check_for_collisions="true"/>
+                </ForceSuccess>
+              </Sequence>
+            </Fallback>
             <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>

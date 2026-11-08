@@ -1,0 +1,5 @@
+# 按编号取消任务
+int32 id
+---
+bool success
+string message

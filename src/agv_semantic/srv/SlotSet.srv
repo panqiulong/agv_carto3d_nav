@@ -1,0 +1,6 @@
+# 手工设置库位状态（被任务预留的库位不能改）
+string slot
+bool full
+---
+bool success
+string message

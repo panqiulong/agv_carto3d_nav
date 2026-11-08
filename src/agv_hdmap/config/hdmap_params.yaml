@@ -1,0 +1,12 @@
+hdmap_navigator:
+  ros__parameters:
+    map_frame: map
+    base_frame: base_link
+    goal_checker_id: general_goal_checker      # nav2_params.yaml 里 controller_server 的 goal_checker_plugins
+    # 仓库内部（map 系，x0, y0, x1, y1, ...）：墙内表面 x ∈ [-25, 25]、y ∈ [-15, 15]（世界）减出生点 (2, -4)
+    indoor_polygon: [-27.0, -11.0, 23.0, -11.0, 23.0, 19.0, -27.0, 19.0]
+traffic_light_sim:
+  ros__parameters:
+    green: 20.0                                # 秒；ew 组 t = 0 变绿，ns 组在 ew 变红时变绿
+    yellow: 3.0
+    red: 23.0

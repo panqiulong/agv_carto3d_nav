@@ -1,0 +1,25 @@
+# elevator.py（示教 / 进电梯居中对齐 / 出梯）参数。ros2 run 时没给 --params-file 会自动用这个文件
+elevator:
+  ros__parameters:
+    use_sim_time: true
+    cloud_topic: /livox/lidar_PointCloud2   # 原始点云：terrain_obstacles 只有 5 m 内的点，等待点看不到后墙
+    obstacle_topic: terrain_obstacles  # 安全检查
+    cmd_topic: cmd_vel_nav             # velocity_smoother 的输入
+    odom_frame: odom
+    base_frame: base_link
+    base_height: 0.183                 # base_link 离地高度，用来截掉地面
+    speed_in: 0.2                      # m/s
+    speed_out: 0.15
+    lookahead: 1.0                     # 纯跟踪前视距离（后轴为参考点）
+    max_curvature: 0.4348              # 1 / 2.3 m，和全局规划一致
+    slow_dist: 0.3                     # 最后这么远线性减速
+    min_frames: 5                      # 至少这么多帧有效提取才开动
+    detect_timeout: 10.0               # s，拿不到 TF / 提取的超时
+    stall_timeout: 10.0                # s，这么久没前进 2 cm 就失败
+    tol_lateral: 0.05                  # 停车容差
+    tol_yaw_deg: 2.0
+    tol_depth: 0.10
+    footprint_pad: 0.05                # 车体外扩这么多以内有障碍点就停车
+    cabin_width: 2.0                   # 轿厢内净宽、深（电梯规格）
+    cabin_depth: 2.6
+    wait_distance: 5.45                # 等待点到轿厢中心的距离；示教时车头前方这么远当作轿厢的粗位置

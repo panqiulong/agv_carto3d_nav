@@ -1,0 +1,7 @@
+# 按名字导航到一个地点
+string name
+---
+bool success
+string message
+---
+float32 distance_remaining
